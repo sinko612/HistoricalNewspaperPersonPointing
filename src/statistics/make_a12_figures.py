@@ -365,7 +365,6 @@ def parse_eval_cached_points(
 def group_duplicate_points(
     points: list[tuple[float, float]], eps: float = 1e-3
 ) -> list[tuple[tuple[float, float], int]]:
-
     groups: list[tuple[tuple[float, float], int]] = []
     for x, y in points:
         for idx, ((gx, gy), count) in enumerate(groups):
@@ -384,7 +383,6 @@ def draw_duplicate_count_label(
     count: int,
     text_font: ImageFont.ImageFont,
 ) -> None:
-
     if count <= 1:
         return
 
@@ -412,7 +410,6 @@ def draw_duplicate_count_label(
 
 
 def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-
     candidates = [
         "C:/Windows/Fonts/arialbd.ttf" if bold else "C:/Windows/Fonts/arial.ttf",
         "C:/Windows/Fonts/calibrib.ttf" if bold else "C:/Windows/Fonts/calibri.ttf",
@@ -492,6 +489,49 @@ def shorten_answer(answer: Any, max_len: int = 180) -> str:
     return text
 
 
+def text_pixel_width(
+    draw: ImageDraw.ImageDraw, text: str, text_font: ImageFont.ImageFont
+) -> int:
+    bbox = draw.textbbox((0, 0), text, font=text_font)
+    return bbox[2] - bbox[0]
+
+
+def wrap_text_pixels(
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    text_font: ImageFont.ImageFont,
+    max_width_px: int,
+) -> list[str]:
+    lines: list[str] = []
+    words = text.split()
+    current = ""
+
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        if text_pixel_width(draw, candidate, text_font) <= max_width_px:
+            current = candidate
+            continue
+
+        if current:
+            lines.append(current)
+            current = word
+        else:
+            piece = ""
+            for ch in word:
+                candidate_piece = piece + ch
+                if text_pixel_width(draw, candidate_piece, text_font) <= max_width_px:
+                    piece = candidate_piece
+                else:
+                    if piece:
+                        lines.append(piece)
+                    piece = ch
+            current = piece
+
+    if current:
+        lines.append(current)
+    return lines
+
+
 def build_prompt_label(row: pd.Series) -> str:
     mode = row.get("eval_mode")
     name = row.get("target_person_name")
@@ -529,7 +569,19 @@ def draw_example(
     duplicate_f = font(72, bold=True)
     margin = 32
     top_h = 0
-    bottom_h = 620
+
+    mode = row.get("eval_mode")
+    answer = shorten_answer(row.get("answer"), max_len=420)
+    gt = "prítomná" if bool(row.get("expected_present")) else "neprítomná"
+    if mode == "point_all_person_photos":
+        gt = f"ref. bodov: {int(row.get('n_gt_faces_without_duplicates', 0))}; pred. bodov: {int(row.get('n_pred_points', 0))}"
+    bottom_text = f"GT: {gt}. Odpoveď modelu: {answer}"
+
+    tmp_draw = ImageDraw.Draw(Image.new("RGB", (1, 1), "white"))
+    bottom_lines = wrap_text_pixels(tmp_draw, bottom_text, answer_f, max_width_px=out_w)
+    line_h = max(48, int(getattr(answer_f, "size", 78) * 1.18))
+    bottom_h = 52 + line_h * len(bottom_lines)
+
     canvas = Image.new(
         "RGB", (out_w + 2 * margin, out_h + top_h + bottom_h + 2 * margin), "white"
     )
@@ -603,15 +655,8 @@ def draw_example(
     draw.line(
         (margin, strip_y - 12, margin + out_w, strip_y - 12), fill=(0, 0, 0), width=2
     )
-    answer = shorten_answer(row.get("answer"), max_len=320)
-    gt = "prítomná" if bool(row.get("expected_present")) else "neprítomná"
-    if mode == "point_all_person_photos":
-        gt = f"ref. bodov: {int(row.get('n_gt_faces_without_duplicates', 0))}; pred. bodov: {int(row.get('n_pred_points', len(pred_points)))}"
-    text = f"GT: {gt}. Odpoveď modelu: {answer}"
-    wrapped = textwrap.wrap(text, width=max(32, int(out_w / 45)))
     y = strip_y
-    line_h = 96
-    for line in wrapped[:6]:
+    for line in bottom_lines:
         draw.text((margin, y), line, fill=(0, 0, 0), font=answer_f)
         y += line_h
 
